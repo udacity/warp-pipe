@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,20 +30,16 @@ var (
 	dbName     = "test"
 	testSchema = []string{
 		`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
-		`CREATE TABLE test (
-			id UUID PRIMARY KEY DEFAULT uuid_generate_v1mc(),
+		`CREATE TABLE "testTable" (
+			ID UUID PRIMARY KEY DEFAULT uuid_generate_v1mc(),
 			type_text TEXT,
 			type_date DATE,
 			type_boolean BOOLEAN,
 			type_json JSON,
 			type_jsonb JSONB,
-			type_array int4[]
+			type_ARRAY int4[]
 		)`,
 	}
-
-	insertSQL = `INSERT INTO
-	test(type_text, type_date, type_boolean, type_json, type_jsonb, type_array)
-	VALUES ($1, $2, $3, $4, $5, $6);`
 )
 
 func setupTestSchema(config pgx.ConnConfig) error {
@@ -151,25 +148,111 @@ func testRow() *TestData {
 	return &row
 }
 
-func writeTestData(config pgx.ConnConfig, n int, results chan<- int) {
-	rowsWritten := 0
+func insertTestData(t *testing.T, config pgx.ConnConfig, wg *sync.WaitGroup) {
+	defer wg.Done()
+	nRows := 50
 	conn, err := pgx.Connect(config)
 	if err != nil {
-		results <- rowsWritten
+		t.Logf("%s: could not connected to source database to insert: %v", t.Name(), err)
 		return
 	}
 	defer conn.Close()
-	for i := 0; i < n; i++ {
+
+	insertSQL := `INSERT INTO
+	"testTable"(type_text, type_date, type_boolean, type_json, type_jsonb, type_ARRAY)
+	VALUES ($1, $2, $3, $4, $5, $6);`
+	for i := 0; i < nRows; i++ {
 		row := testRow()
 		_, err = conn.Exec(insertSQL, row.text, row.date, row.boolean, row.json, row.jsonb, row.array)
 		if err != nil {
-			fmt.Printf("oops: %v", err)
-			results <- rowsWritten
-			return
+			t.Logf("%s: Could not insert row in source database: %v", t.Name(), err)
 		}
-		rowsWritten = rowsWritten + 1
 	}
-	results <- rowsWritten
+}
+
+func updateTestData(t *testing.T, config pgx.ConnConfig, wg *sync.WaitGroup) {
+	defer wg.Done()
+	conn, err := pgx.Connect(config)
+	if err != nil {
+		t.Logf("%s: could not connected to source database to update: %v", t.Name(), err)
+		return
+	}
+	defer conn.Close()
+
+	//update one field in one row
+	updateSQL := `UPDATE "testTable" set type_boolean = true WHERE ID IN (SELECT ID FROM "testTable" where type_boolean = false LIMIT 1);`
+	_, err = conn.Exec(updateSQL)
+	if err != nil {
+		t.Logf("%s: Could not update row in source database: %v", t.Name(), err)
+	}
+}
+
+func deleteTestData(t *testing.T, config pgx.ConnConfig, wg *sync.WaitGroup) {
+	defer wg.Done()
+	conn, err := pgx.Connect(config)
+	if err != nil {
+		t.Logf("%s: Could not connect to source db to delete data", t.Name())
+		return
+	}
+	defer conn.Close()
+
+	// delete a row
+	deleteSQL := `DELETE FROM "testTable" WHERE ID IN (SELECT ID FROM "testTable" LIMIT 1);`
+	_, err = conn.Exec(deleteSQL)
+	if err != nil {
+		t.Logf("%s: Could not delete row in source database: %v", t.Name(), err)
+	}
+}
+
+func verify(t *testing.T, src, target pgx.ConnConfig) (bool, error) {
+	dataMatches := true
+	sourceConn, err := pgx.Connect(src)
+	if err != nil {
+		return false, fmt.Errorf("could not connect to source database: %v", err)
+	}
+	defer sourceConn.Close()
+
+	targetConn, err := pgx.Connect(target)
+	if err != nil {
+		return false, fmt.Errorf("could not connect to source database: %v", err)
+	}
+	defer targetConn.Close()
+
+	verificationQueries := []string{
+		`select count(*) from "testTable";`,
+		`select count(*) from "testTable" where type_boolean = true;`,
+	}
+
+	for _, q := range verificationQueries {
+		var srcCount, targetCount int
+		res, err := sourceConn.Query(q)
+		if err != nil {
+			return false, fmt.Errorf("could not run query against source: %v", err)
+		}
+		for res.Next() {
+			err := res.Scan(&srcCount)
+			if err != nil {
+				return false, fmt.Errorf("could not query result from source: %v", err)
+			}
+		}
+		res.Close()
+		res, err = targetConn.Query(q)
+		if err != nil {
+			return false, fmt.Errorf("could not run query against target: %v", err)
+		}
+		for res.Next() {
+			err := res.Scan(&targetCount)
+			if err != nil {
+				return false, fmt.Errorf("could not query result from source: %v", err)
+			}
+		}
+		res.Close()
+		if srcCount != targetCount {
+			t.Logf("results do not match: query: %s, sourceCount: %d, targetCount: %d, \n", q, srcCount, targetCount)
+			dataMatches = false
+		}
+	}
+	return dataMatches, nil
 }
 
 func TestVersionMigration(t *testing.T) {
@@ -216,16 +299,27 @@ func TestVersionMigration(t *testing.T) {
 			// setup warp-pipe on source database
 			wpConn, err := pgx.Connect(srcDBConfig)
 			require.NoError(t, err)
-			err = db.Prepare(wpConn, []string{"public"}, []string{"test"}, []string{})
+			err = db.Prepare(wpConn, []string{"public"}, []string{"testTable"}, []string{})
 			if err != nil {
 				t.Errorf("Could not setup warp pipe: %v", err)
 			}
 
-			// write rows to the source database
-			writersCount := 20
-			rowsWritten := make(chan int, writersCount)
-			for i := 0; i < writersCount; i++ {
-				go writeTestData(srcDBConfig, 50, rowsWritten)
+			// write, update, delete to produce change sets
+			var insertsWG, updatesWG, deletesWG sync.WaitGroup
+			workersCount := 20
+			for i := 0; i < workersCount; i++ {
+				insertsWG.Add(1)
+				go insertTestData(t, srcDBConfig, &insertsWG)
+			}
+
+			for i := 0; i < workersCount; i++ {
+				updatesWG.Add(1)
+				go updateTestData(t, srcDBConfig, &updatesWG)
+			}
+
+			for i := 0; i < workersCount; i++ {
+				deletesWG.Add(1)
+				go deleteTestData(t, srcDBConfig, &deletesWG)
 			}
 
 			// sync source and target with Axon
@@ -242,38 +336,23 @@ func TestVersionMigration(t *testing.T) {
 				TargetDBPass:   targetDBConfig.Password,
 				TargetDBSchema: "public",
 			}
-
 			axon := warppipe.Axon{Config: &axonCfg}
 			axon.Run()
 
-			// verify sync
-			totalRowsWritten := 0
-			for i := 0; i < writersCount; i++ {
-				r := <-rowsWritten
-				totalRowsWritten = totalRowsWritten + r
-			}
-			t.Logf("%d rows were written to source database", totalRowsWritten)
+			// wait for all our routines to complete
+			insertsWG.Wait()
+			updatesWG.Wait()
+			deletesWG.Wait()
 
-			c, err := pgx.Connect(targetDBConfig)
-			if err != nil {
-				t.Errorf("Could not connect to target database to verify sync: %v", err)
-			}
-			defer c.Close()
+			// sync one more time to catch any stragglers
+			axon.Run()
 
-			rows, err := c.Query("select count(*) from test")
-			if err != nil {
-				t.Errorf("Could not query target database: %v", err)
-			}
-			defer rows.Close()
-			var rowsSynced int
-			for rows.Next() {
-				err := rows.Scan(&rowsSynced)
-				if err != nil {
-					t.Errorf("Could not read the number of rows synced: %v", err)
-				}
-			}
-			if totalRowsWritten != rowsSynced {
-				t.Errorf("Expected %d rows, have only %d", totalRowsWritten, rowsSynced)
+			// run simple count queries to verify if the data was synced correctly.
+			// TODO: replace with checksum approach
+			dataMatches, err := verify(t, srcDBConfig, targetDBConfig)
+			require.NoError(t, err)
+			if !dataMatches {
+				t.Error("Data integrity checks failed")
 			}
 		})
 	}

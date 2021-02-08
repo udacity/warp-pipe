@@ -94,12 +94,12 @@ func (d dockerClient) createNewContainer(ctx context.Context, image string, port
 	if len(cmd) > 0 {
 		containerConfig.Cmd = cmd
 	}
-	cont, err := d.ContainerCreate(
-		ctx,
-		containerConfig,
-		&container.HostConfig{
-			PortBindings: portBinding,
-		}, &network.NetworkingConfig{}, nil, "")
+
+	hostConfig := &container.HostConfig{
+		PortBindings: portBinding,
+	}
+	networkingConfig := &network.NetworkingConfig{}
+	cont, err := d.ContainerCreate(ctx, containerConfig, hostConfig, networkingConfig, nil, "")
 
 	if err != nil {
 		return nil, fmt.Errorf("could not create container: %w", err)
@@ -129,7 +129,7 @@ func (d dockerClient) removeContainer(ctx context.Context, id string) error {
 	return nil
 }
 
-func (d dockerClient) printLogs(ctx context.Context, id string) {
+func (d dockerClient) printLogs(ctx context.Context, id string) error {
 	out, err := d.ContainerLogs(ctx, id, types.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
@@ -137,8 +137,9 @@ func (d dockerClient) printLogs(ctx context.Context, id string) {
 		Timestamps: true,
 	})
 	if err != nil {
-		panic(err)
+		return err
 	}
 	io.Copy(os.Stdout, out)
 	defer out.Close()
+	return nil
 }
