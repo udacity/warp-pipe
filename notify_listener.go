@@ -182,10 +182,17 @@ func (l *NotifyListener) processChangeset(event *store.Event) {
 			l.errCh <- err
 		}
 
+		var newRawValues map[string]json.RawMessage
+		err = json.Unmarshal(event.NewValues, &newRawValues)
+		if err != nil {
+			l.errCh <- err
+		}
+
 		for k, v := range newValues {
 			col := &ChangesetColumn{
-				Column: k,
-				Value:  v,
+				Column:   k,
+				Value:    v,
+				RawValue: newRawValues[k],
 			}
 			cs.NewValues = append(cs.NewValues, col)
 		}

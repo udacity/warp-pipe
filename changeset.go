@@ -1,6 +1,7 @@
 package warppipe
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -75,7 +76,8 @@ func (c *Changeset) GetPreviousColumnValue(column string) (interface{}, bool) {
 
 // ChangesetColumn represents a type and value for a column in a changeset.
 type ChangesetColumn struct {
-	Column string      `json:"column"`
-	Value  interface{} `json:"value"`
-	Type   string      `json:"type"`
+	Column   string          `json:"column"`
+	Value    interface{}     `json:"value"`
+	RawValue json.RawMessage `json:"value_b"`
+	Type     string          `json:"type"`
 }

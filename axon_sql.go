@@ -1,7 +1,6 @@
 package warppipe
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"reflect"
@@ -25,13 +24,7 @@ func prepareQueryArgs(changesetCols []*ChangesetColumn) ([]string, []string, map
 	for _, c := range changesetCols {
 		t := reflect.TypeOf(c.Value)
 		if t != nil && t.Kind() == reflect.Map {
-			// Found a hashmap, this is a JSON/B field. Convert manually to string to
-			// avoid package sql error: "unsupported type map[string]interface {}".
-			b, err := json.Marshal(c.Value)
-			if err != nil {
-				return cols, colArgs, values, fmt.Errorf("unable to marshal JSON field %s: %w", c.Column, err)
-			}
-			c.Value = string(b)
+			c.Value = string(c.RawValue)
 		}
 		if t != nil && t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Interface {
 			// Set empty slices to pq.Array(nil) to avoid package sql error on an
