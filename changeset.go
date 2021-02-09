@@ -78,6 +78,6 @@ func (c *Changeset) GetPreviousColumnValue(column string) (interface{}, bool) {
 type ChangesetColumn struct {
 	Column   string          `json:"column"`
 	Value    interface{}     `json:"value"`
-	RawValue json.RawMessage `json:"value_b"`
+	RawValue json.RawMessage `json:"raw_value"`
 	Type     string          `json:"type"`
 }

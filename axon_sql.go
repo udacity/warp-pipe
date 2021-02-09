@@ -24,6 +24,8 @@ func prepareQueryArgs(changesetCols []*ChangesetColumn) ([]string, []string, map
 	for _, c := range changesetCols {
 		t := reflect.TypeOf(c.Value)
 		if t != nil && t.Kind() == reflect.Map {
+			// Found a hashmap, this is a JSON/B field. Convert manually to string to
+			// avoid package sql error: "unsupported type map[string]interface {}".
 			c.Value = string(c.RawValue)
 		}
 		if t != nil && t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Interface {

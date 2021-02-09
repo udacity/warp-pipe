@@ -3,6 +3,7 @@ package warppipe
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -179,13 +180,13 @@ func (l *NotifyListener) processChangeset(event *store.Event) {
 		var newValues map[string]interface{}
 		err := json.Unmarshal(event.NewValues, &newValues)
 		if err != nil {
-			l.errCh <- err
+			l.errCh <- fmt.Errorf("failed to unmarshal changeset values: %w", err)
 		}
 
 		var newRawValues map[string]json.RawMessage
 		err = json.Unmarshal(event.NewValues, &newRawValues)
 		if err != nil {
-			l.errCh <- err
+			l.errCh <- fmt.Errorf("failed to unmarshal raw changeset values: %w", err)
 		}
 
 		for k, v := range newValues {
