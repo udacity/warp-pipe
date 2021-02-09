@@ -31,13 +31,13 @@ var (
 	testSchema = []string{
 		`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
 		`CREATE TABLE "testTable" (
-			ID UUID PRIMARY KEY DEFAULT uuid_generate_v1mc(),
+			id UUID PRIMARY KEY DEFAULT uuid_generate_v1mc(),
 			type_text TEXT,
 			type_date DATE,
 			type_boolean BOOLEAN,
 			type_json JSON,
 			type_jsonb JSONB,
-			type_ARRAY int4[]
+			type_array int4[]
 		)`,
 	}
 )
@@ -150,7 +150,7 @@ func testRow() *TestData {
 
 func insertTestData(t *testing.T, config pgx.ConnConfig, wg *sync.WaitGroup) {
 	defer wg.Done()
-	nRows := 50
+	nRows := 10
 	conn, err := pgx.Connect(config)
 	if err != nil {
 		t.Logf("%s: could not connected to source database to insert: %v", t.Name(), err)
@@ -159,7 +159,7 @@ func insertTestData(t *testing.T, config pgx.ConnConfig, wg *sync.WaitGroup) {
 	defer conn.Close()
 
 	insertSQL := `INSERT INTO
-	"testTable"(type_text, type_date, type_boolean, type_json, type_jsonb, type_ARRAY)
+	"testTable"(type_text, type_date, type_boolean, type_json, type_jsonb, type_array)
 	VALUES ($1, $2, $3, $4, $5, $6);`
 	for i := 0; i < nRows; i++ {
 		row := testRow()
@@ -204,57 +204,6 @@ func deleteTestData(t *testing.T, config pgx.ConnConfig, wg *sync.WaitGroup) {
 	}
 }
 
-func verify(t *testing.T, src, target pgx.ConnConfig) (bool, error) {
-	dataMatches := true
-	sourceConn, err := pgx.Connect(src)
-	if err != nil {
-		return false, fmt.Errorf("could not connect to source database: %v", err)
-	}
-	defer sourceConn.Close()
-
-	targetConn, err := pgx.Connect(target)
-	if err != nil {
-		return false, fmt.Errorf("could not connect to source database: %v", err)
-	}
-	defer targetConn.Close()
-
-	verificationQueries := []string{
-		`select count(*) from "testTable";`,
-		`select count(*) from "testTable" where type_boolean = true;`,
-	}
-
-	for _, q := range verificationQueries {
-		var srcCount, targetCount int
-		res, err := sourceConn.Query(q)
-		if err != nil {
-			return false, fmt.Errorf("could not run query against source: %v", err)
-		}
-		for res.Next() {
-			err := res.Scan(&srcCount)
-			if err != nil {
-				return false, fmt.Errorf("could not query result from source: %v", err)
-			}
-		}
-		res.Close()
-		res, err = targetConn.Query(q)
-		if err != nil {
-			return false, fmt.Errorf("could not run query against target: %v", err)
-		}
-		for res.Next() {
-			err := res.Scan(&targetCount)
-			if err != nil {
-				return false, fmt.Errorf("could not query result from source: %v", err)
-			}
-		}
-		res.Close()
-		if srcCount != targetCount {
-			t.Logf("results do not match: query: %s, sourceCount: %d, targetCount: %d, \n", q, srcCount, targetCount)
-			dataMatches = false
-		}
-	}
-	return dataMatches, nil
-}
-
 func TestVersionMigration(t *testing.T) {
 	testCases := []struct {
 		name   string
@@ -264,7 +213,7 @@ func TestVersionMigration(t *testing.T) {
 		{
 			name:   "9.5To9.6",
 			source: "9.5",
-			target: "9.6",
+			target: "9.5",
 		},
 	}
 	for _, tc := range testCases {
@@ -297,12 +246,13 @@ func TestVersionMigration(t *testing.T) {
 			require.NoError(t, err)
 
 			// setup warp-pipe on source database
+			schemas := []string{"public"}
+			includeTables := []string{}
+			excludeTables := []string{}
 			wpConn, err := pgx.Connect(srcDBConfig)
 			require.NoError(t, err)
 			err = db.Prepare(wpConn, []string{"public"}, []string{"testTable"}, []string{})
-			if err != nil {
-				t.Errorf("Could not setup warp pipe: %v", err)
-			}
+			require.NoError(t, err)
 
 			// write, update, delete to produce change sets
 			var insertsWG, updatesWG, deletesWG sync.WaitGroup
@@ -347,13 +297,8 @@ func TestVersionMigration(t *testing.T) {
 			// sync one more time to catch any stragglers
 			axon.Run()
 
-			// run simple count queries to verify if the data was synced correctly.
-			// TODO: replace with checksum approach
-			dataMatches, err := verify(t, srcDBConfig, targetDBConfig)
+			err = axon.Verify(schemas, includeTables, excludeTables)
 			require.NoError(t, err)
-			if !dataMatches {
-				t.Error("Data integrity checks failed")
-			}
 		})
 	}
 }
