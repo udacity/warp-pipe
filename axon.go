@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx"
 	"github.com/jmoiron/sqlx"
 	"github.com/kelseyhightower/envconfig"
+	"github.com/perangel/warp-pipe/db"
 	"github.com/sirupsen/logrus"
 )
 
@@ -162,6 +163,78 @@ func (a *Axon) Run() {
 			}
 		}
 	}
+}
+
+func (a *Axon) Verify(schemas, includeTables, excludeTables []string) error {
+
+	if a.Logger == nil {
+		a.Logger = logrus.New()
+		a.Logger.SetFormatter(&logrus.JSONFormatter{})
+	}
+
+	// TODO: Refactor to use just one connection to the sourceDB
+	sourceDBConn, err := pgx.Connect(pgx.ConnConfig{
+		Host:     a.Config.SourceDBHost,
+		Port:     uint16(a.Config.SourceDBPort),
+		User:     a.Config.SourceDBUser,
+		Password: a.Config.SourceDBPass,
+		Database: a.Config.SourceDBName,
+	})
+	if err != nil {
+		return fmt.Errorf("unable to connect to source database: %w", err)
+	}
+	err = db.PrepareForDataIntegrityChecks(sourceDBConn)
+	if err != nil {
+		return fmt.Errorf("unable to prepare source database for Integrity checks: %w", err)
+	}
+	targetDBConn, err := pgx.Connect(pgx.ConnConfig{
+		Host:     a.Config.TargetDBHost,
+		Port:     uint16(a.Config.TargetDBPort),
+		User:     a.Config.TargetDBUser,
+		Password: a.Config.TargetDBPass,
+		Database: a.Config.TargetDBName,
+	})
+
+	if err != nil {
+		return fmt.Errorf("unable to connect to target database: %w", err)
+	}
+	err = db.PrepareForDataIntegrityChecks(targetDBConn)
+	if err != nil {
+		return fmt.Errorf("unable to prepare target database for Integrity checks: %w", err)
+	}
+	//TODO: Pass config
+	tables, err := db.GenerateTablesList(sourceDBConn, schemas, includeTables, excludeTables)
+	if err != nil {
+		return fmt.Errorf("unable to generate the list of source tables to check: %w", err)
+	}
+
+	for _, table := range tables {
+		sql := fmt.Sprintf(
+			`select md5(pg_concat(md5(CAST((t.*)AS text)) order by t.id)) from "%s"."%s" as t`,
+			table.Schema,
+			table.Name,
+		)
+
+		sourceChecksum := ""
+		row := sourceDBConn.QueryRow(sql)
+		err := row.Scan(&sourceChecksum)
+		if err != nil {
+			return fmt.Errorf("failed to scan the source checksum for table %s.%s: %w", table.Schema, table.Name, err)
+		}
+
+		targetChecksum := ""
+		row = targetDBConn.QueryRow(sql)
+		err = row.Scan(&targetChecksum)
+		if err != nil {
+			return fmt.Errorf("failed to scan the target checksum for table %s.%s: %w", table.Schema, table.Name, err)
+		}
+
+		if sourceChecksum != targetChecksum {
+			return fmt.Errorf("checksums differ for table %s.%s", table.Schema, table.Name)
+		}
+
+	}
+	return nil
 }
 
 // Shutdown the Axon worker.
