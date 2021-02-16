@@ -32,6 +32,7 @@ type Axon struct {
 	Config     *AxonConfig
 	Logger     *logrus.Logger
 	shutdownCh chan os.Signal
+	pipeline   *Pipeline
 }
 
 // NewAxonConfigFromEnv loads the Axon configuration from environment variables.
@@ -134,6 +135,10 @@ func (a *Axon) Run() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	changes, errs := wp.ListenForChanges(ctx)
+
+	if a.pipeline != nil {
+		changes, errs = a.pipeline.Start(ctx, changes)
+	}
 
 	for {
 		select {
@@ -257,6 +262,12 @@ func (a *Axon) Verify(schemas, includeTables, excludeTables []string) error {
 		}
 	}
 	return nil
+
+// RunWithPipeline runs Axon with a provided pipeline. Pipelines can be used
+// to filter or transform data before applying them to the target database.
+func (a *Axon) RunWithPipeline(pipeline *Pipeline) {
+	a.pipeline = pipeline
+	a.Run()
 }
 
 // Shutdown the Axon worker.
