@@ -75,14 +75,8 @@ func (l *NotifyListener) Dial(connConfig *pgx.ConnConfig) error {
 // ListenForChanges returns a channel that emits database changesets.
 func (l *NotifyListener) ListenForChanges(ctx context.Context) (chan *Changeset, chan error) {
 	l.logger.Info("Starting notify listener for `warp_pipe_new_changeset`")
-	err := l.conn.Listen("warp_pipe_new_changeset")
-	if err != nil {
-		l.logger.WithError(err).Fatal("failed to listen on notify channel")
-	}
-
 	l.store = store.NewChangesetStore(l.conn)
 
-	// loop - listen for notifications
 	go func() {
 		if l.startFromID != nil {
 			eventCh := make(chan *store.Event)
@@ -128,6 +122,12 @@ func (l *NotifyListener) ListenForChanges(ctx context.Context) (chan *Changeset,
 			}
 		}
 
+		err := l.conn.Listen("warp_pipe_new_changeset")
+		if err != nil {
+			l.logger.WithError(err).Fatal("failed to listen on notify channel")
+		}
+
+		// loop - listen for notifications
 		for {
 			msg, err := l.conn.WaitForNotification(ctx)
 			if err != nil {
