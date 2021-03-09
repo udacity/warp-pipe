@@ -43,7 +43,7 @@ func (e *Event) String() string {
 // EventStore is the interface for providing access to events storage.
 type EventStore interface {
 	GetByID(ctx context.Context, eventID int64) (*Event, error)
-	GetFromOffset(ctx context.Context, offset int, eventCh chan *Event, doneCh chan bool, errCh chan error)
+	GetFromOffset(ctx context.Context, offset int64, eventCh chan *Event, doneCh chan bool, errCh chan error)
 	GetSinceTimestamp(ctx context.Context, since time.Time, eventCh chan *Event, doneCh chan bool, errCh chan error)
 	DeleteBeforeID(ctx context.Context, eventID int64) error
 	DeleteBeforeTimestamp(ctx context.Context, since time.Time) error
@@ -122,7 +122,7 @@ func (s *ChangesetStore) GetByID(ctx context.Context, eventID int64) (*Event, er
 }
 
 // GetFromOffset returns all events starting from a specific offset
-func (s *ChangesetStore) GetFromOffset(ctx context.Context, offset int, eventCh chan *Event, doneCh chan bool, errCh chan error) {
+func (s *ChangesetStore) GetFromOffset(ctx context.Context, offset int64, eventCh chan *Event, doneCh chan bool, errCh chan error) {
 	sql := `
 		SELECT
 			id,
@@ -154,7 +154,7 @@ func (s *ChangesetStore) GetFromOffset(ctx context.Context, offset int, eventCh 
 			return
 		}
 
-		offset += len(evts)
+		offset += int64(len(evts))
 	}
 }
 

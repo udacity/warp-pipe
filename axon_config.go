@@ -23,7 +23,7 @@ type AxonConfig struct {
 	// start the axon run from the specified changeset offset. defaults to 0.
 	// Do not use specific changeset IDs, because they may not be consistent
 	// between source and target.
-	StartFromOffset int `envconfig:"start_from_offset" default:"0"`
+	StartFromOffset int64 `envconfig:"start_from_offset" default:"0"`
 
 	// Fail instead of skip when a duplicate row is found during insert.
 	// Duplicates should never happen in some cases such as database migrations.

@@ -20,7 +20,7 @@ import (
 type NotifyOption func(*NotifyListener)
 
 // StartFromOffset is an option for setting the startFromOffset
-func StartFromOffset(offset int) NotifyOption {
+func StartFromOffset(offset int64) NotifyOption {
 	return func(l *NotifyListener) {
 		l.startFromOffset = &offset
 	}
@@ -47,7 +47,7 @@ type NotifyListener struct {
 	conn                   *pgx.Conn
 	logger                 *log.Entry
 	store                  store.EventStore
-	startFromOffset        *int
+	startFromOffset        *int64
 	startFromTimestamp     *time.Time
 	lastProcessedTimestamp *time.Time
 	lastProcessedChangeset *Changeset

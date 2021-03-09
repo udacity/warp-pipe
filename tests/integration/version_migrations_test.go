@@ -364,7 +364,7 @@ func TestVersionMigration(t *testing.T) {
 			t.Log("second pass sync. starting from count of Changesets in target, catching any stragglers")
 			row, err := targetConn.Query("SELECT count(id) from warp_pipe.changesets")
 			require.True(t, row.Next())
-			var count int
+			var count int64
 			row.Scan(&count)
 			t.Logf("count of changesets in target: %d", count)
 
