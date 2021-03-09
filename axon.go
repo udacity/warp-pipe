@@ -349,8 +349,8 @@ func (a *Axon) VerifyChangesets(targetCountID int64) error {
 
 		if start {
 			start = false
-			a.Logger.Infof("first source record: %s", sEvent)
-			a.Logger.Infof("first target record: %s", tEvent)
+			a.Logger.Infof("first source record ID: %d", sEvent.ID)
+			a.Logger.Infof("first target record ID: %d", tEvent.ID)
 		}
 
 		countProcessed++
@@ -372,8 +372,8 @@ func (a *Axon) VerifyChangesets(targetCountID int64) error {
 			break
 		}
 	}
-	a.Logger.Info("processed record count: %d", countProcessed)
-	a.Logger.Info("different record count: %d", countDiff)
+	a.Logger.Infof("processed record count: %d", countProcessed)
+	a.Logger.Infof("different record count: %d", countDiff)
 
 	diffFound := countDiff > 0
 	if diffFound {
