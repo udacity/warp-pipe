@@ -43,6 +43,7 @@ const (
 		CREATE OR REPLACE FUNCTION warp_pipe.on_modify()
 			RETURNS TRIGGER AS $$
 				BEGIN
+					LOCK TABLE warp_pipe.changesets IN EXCLUSIVE MODE;
 					IF TG_WHEN <> 'AFTER' THEN
 						RAISE EXCEPTION 'warp_pipe.on_modify() may only run as an AFTER trigger';
 					END IF;

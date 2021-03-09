@@ -101,7 +101,7 @@ func (l *NotifyListener) ListenForChanges(ctx context.Context) (chan *Changeset,
 				select {
 				case c := <-eventCh:
 					l.logger.Debugf("processIDLoop: changeset %d", c.ID)
-					l.handleChangeset(c)
+					l.processChangeset(c)
 				case err := <-errCh:
 					log.WithError(err).Fatal("encountered an error while reading changesets")
 					l.errCh <- err
@@ -123,7 +123,7 @@ func (l *NotifyListener) ListenForChanges(ctx context.Context) (chan *Changeset,
 				select {
 				case c := <-eventCh:
 					l.logger.Debugf("processTimestampLoop: changeset %d", c.ID)
-					l.handleChangeset(c)
+					l.processChangeset(c)
 				case err := <-errCh:
 					log.WithError(err).Fatal("encountered an error while reading changesets")
 					l.errCh <- err
@@ -173,7 +173,7 @@ func (l *NotifyListener) processMessage(msg *pgx.Notification) {
 	}
 
 	l.logger.Debugf("processMessage: changeset %d", event.ID)
-	l.handleChangeset(event)
+	l.processChangeset(event)
 }
 
 // handleChangesets implements a strict ordered buffer queue from unordered
@@ -224,6 +224,14 @@ func (l *NotifyListener) handleChangeset(event *store.Event) {
 }
 
 func (l *NotifyListener) processChangeset(event *store.Event) {
+	// NOTE: If the changeset ID is less than the ID of the last processed changeset, skip.
+	// This likely means that we've already processed the changeset when reading from the
+	// changesets table, and the connection is playing back buffered notifications.
+	// (see: `pgx.Conn.notifications`)
+	if l.lastProcessedChangeset != nil && event.ID <= l.lastProcessedChangeset.ID {
+		return
+	}
+
 	l.logger.Infof("Processing record id: %d", event.ID)
 
 	cs := &Changeset{
@@ -288,6 +296,12 @@ func (l *NotifyListener) processChangeset(event *store.Event) {
 				Value:  v,
 			}
 			cs.OldValues = append(cs.OldValues, col)
+		}
+	}
+
+	if l.lastProcessedChangeset != nil {
+		if cs.ID != l.lastProcessedChangeset.ID+1 {
+			panic("unexpected changeset id")
 		}
 	}
 
