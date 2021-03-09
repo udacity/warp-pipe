@@ -308,21 +308,21 @@ func TestVersionMigration(t *testing.T) {
 			require.NoError(t, err)
 
 			// write, update, delete to produce change sets
-			var insertsWG, updatesWG, deletesWG sync.WaitGroup
+			var workersWG sync.WaitGroup
 			workersCount := 10
 			for i := 0; i < workersCount; i++ {
-				insertsWG.Add(1)
-				go insertTestData(t, srcDBConfig, 10, &insertsWG)
+				workersWG.Add(1)
+				go insertTestData(t, srcDBConfig, 10, &workersWG)
 			}
 
 			for i := 0; i < workersCount; i++ {
-				updatesWG.Add(1)
-				go updateTestData(t, srcDBConfig, 10, &updatesWG)
+				workersWG.Add(1)
+				go updateTestData(t, srcDBConfig, 10, &workersWG)
 			}
 
 			for i := 0; i < workersCount; i++ {
-				deletesWG.Add(1)
-				go deleteTestData(t, srcDBConfig, 10, &deletesWG)
+				workersWG.Add(1)
+				go deleteTestData(t, srcDBConfig, 10, &workersWG)
 			}
 
 			// sync source and target with Axon
@@ -350,16 +350,14 @@ func TestVersionMigration(t *testing.T) {
 			err = axon.Run()
 			require.NoError(t, err)
 
-			// wait for all our routines to complete
-			insertsWG.Wait()
-			updatesWG.Wait()
-			deletesWG.Wait()
+			// wait for all workers to complete
+			workersWG.Wait()
 
 			for i := 0; i < workersCount; i++ {
-				insertsWG.Add(1)
-				go insertTestData(t, srcDBConfig, 10, &insertsWG)
+				workersWG.Add(1)
+				go insertTestData(t, srcDBConfig, 10, &workersWG)
 			}
-			insertsWG.Wait()
+			workersWG.Wait()
 
 			t.Log("second pass sync. starting from count of Changesets in target, catching any stragglers")
 			row, err := targetConn.Query("SELECT count(id) from warp_pipe.changesets")
