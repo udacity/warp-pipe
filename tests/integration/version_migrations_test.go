@@ -45,6 +45,22 @@ var (
 		`CREATE TABLE empty_table (
 			id SERIAL PRIMARY KEY
 		)`,
+		`CREATE TABLE json_table (
+			id SERIAL PRIMARY KEY,
+			type_json JSON,
+			type_jsonb JSONB
+		)`,
+	}
+
+	jsonInputs = []string{
+		// some examples from the doc.
+		`5`,
+		`[1, 2, "foo", null]`,
+		`{"bar": "baz", "balance": 7.77, "active": false}`,
+		`{"foo": [true, "bar"], "tags": {"a": 1, "b": null}}`,
+
+		// Example entry from classroom content
+		`"{\"radio1\":false,\"radio2\":true,\"radio3\":false,\"radio4\":false}"`,
 	}
 )
 
@@ -244,6 +260,25 @@ func deleteTestData(t *testing.T, config pgx.ConnConfig, nRows int, wg *sync.Wai
 	}
 }
 
+func jsonChangeSets(t *testing.T, config pgx.ConnConfig, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	conn, err := pgx.Connect(config)
+	if err != nil {
+		t.Fatalf("%s: could not connected to source database to insert: %v", t.Name(), err)
+		return
+	}
+	defer conn.Close()
+
+	insertSQL := `INSERT INTO json_table (type_json, type_jsonb) VALUES ($1, $2);`
+
+	for _, s := range jsonInputs {
+		_, err := conn.Exec(insertSQL, []byte(s), []byte(s))
+		if err != nil {
+			t.Fatalf("%s: Could not insert row in source database: %v", t.Name(), err)
+		}
+	}
+}
 func TestVersionMigration(t *testing.T) {
 
 	testCases := []struct {
@@ -297,14 +332,14 @@ func TestVersionMigration(t *testing.T) {
 			wpConn, err := pgx.Connect(srcDBConfig)
 			require.NoError(t, err)
 
-			err = db.Prepare(wpConn, []string{"public"}, []string{"testTable"}, []string{})
+			err = db.Prepare(wpConn, schemas, includeTables, excludeTables)
 			require.NoError(t, err)
 
 			// Setup WP on target
 			targetConn, err := pgx.Connect(targetDBConfig)
 			require.NoError(t, err)
 
-			err = db.Prepare(targetConn, []string{"public"}, []string{"testTable"}, []string{})
+			err = db.Prepare(targetConn, schemas, includeTables, excludeTables)
 			require.NoError(t, err)
 
 			// write, update, delete to produce change sets
@@ -323,6 +358,11 @@ func TestVersionMigration(t *testing.T) {
 			for i := 0; i < workersCount; i++ {
 				workersWG.Add(1)
 				go deleteTestData(t, srcDBConfig, 10, &workersWG)
+			}
+
+			for i := 0; i < workersCount; i++ {
+				workersWG.Add(1)
+				go jsonChangeSets(t, srcDBConfig, &workersWG)
 			}
 
 			// sync source and target with Axon
